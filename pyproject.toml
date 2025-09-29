@@ -32,9 +32,7 @@ dependencies = [
     "sentence_transformers>=5.0.0",
     "transformers>=4.55.0",
     "pyyaml>=6.0",
-    "openai-harmony>=0.0.4",
-    "vllm>=0.10.1"
-]
+    "openai-harmony>=0.0.4",]
 
 [build-system]
 requires = ["hatchling"]
