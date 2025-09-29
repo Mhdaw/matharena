@@ -209,7 +209,7 @@ class APIQuery:
                 self.api = "openai"
         elif self.api == "vllm":
             return
-        elif self.api == "vllm-server":
+        elif self.api == "vllmserver":
             self.api_key = "EMPTY"
             self.base_url = "http://localhost:8000/v1"
         else:
