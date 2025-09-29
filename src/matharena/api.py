@@ -212,6 +212,7 @@ class APIQuery:
         elif self.api == "vllmserver":
             self.api_key = "EMPTY"
             self.base_url = "http://localhost:8000/v1"
+            self.api = "openai"
         else:
             raise ValueError(f"API {self.api} not supported.")
 
