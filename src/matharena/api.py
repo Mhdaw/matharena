@@ -197,6 +197,10 @@ class APIQuery:
             self.api_key = os.getenv("GLM_API_KEY")
             self.base_url = "https://open.bigmodel.cn/api/paas/v4/"
             self.api = "openai"
+        elif self.api == "cerebras":
+            self.api_key = os.getenv("CEREBRAS_API_KEY")
+            self.base_url = "https://api.cerebras.ai/v1"
+            self.api = "openai"
         elif self.api == "deepseek":
             self.api_key = os.getenv("DEEPSEEK_API_KEY")
             self.base_url = "https://api.deepseek.com"

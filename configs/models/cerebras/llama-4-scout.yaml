@@ -1,0 +1,10 @@
+model: llama-4-scout-17b-16e-instruct
+api: cerebras
+max_tokens: 32000
+temperature: 0.6
+top_p: 0.9
+read_cost: 0.22
+write_cost: 0.88
+human_readable_id: Llama-4-Scout-17B-Instruct Cerebras
+date: "2025-09-30"
+concurrent_requests: 8

@@ -1,0 +1,10 @@
+model: gpt-oss-120b
+api: cerebras
+max_tokens: 32000
+temperature: 0.6
+top_p: 0.9
+read_cost: 0.7
+write_cost: 2.8
+human_readable_id: GPT-OSS-120B Cerebras
+date: "2025-09-30"
+concurrent_requests: 8
