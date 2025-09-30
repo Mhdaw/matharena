@@ -711,18 +711,9 @@ class APIQuery:
         Returns:
             dict: The result of the query.
         """
-        input_tokens = 0
-        output_tokens = 0
-        output_messages = []
-        current_tool_calls = 0
-        parsed_output_msgs = []
-
-        max_tool_calls = self.max_tool_calls
-        if not allow_tools:
-            max_tool_calls = 0
-
-        for it in range(max_tool_calls + 1):
-            start_tool_calls = current_tool_calls
+        n = self.kwargs.get("n", 1)
+        if n > 1:
+            # Handle multiple completions per call
             response = None
             n_retries = 0
             while response is None and n_retries < self.max_retries_inner:
@@ -730,82 +721,131 @@ class APIQuery:
                 try:
                     response = client.chat.completions.create(
                         model=self.model,
-                        messages=messages + output_messages,
-                        tools=None if current_tool_calls >= max_tool_calls else self.tool_descriptions,
+                        messages=messages,
+                        n=n,
                         timeout=self.timeout,
-                        **self.kwargs
+                        **{k: v for k, v in self.kwargs.items() if k != "n"}
                     )
                 except Exception as e:
                     logger.info(f"Got OpenAI error: {e}")
-                    time.sleep(60)               
-                    if isinstance(e, RateLimitError):
-                        logger.info("Got OpenAI rate limit error. Sleeping for 60 seconds.")
-                        
-                        continue
-                    else:
-                        continue
+                    time.sleep(60)
+                    continue
             if response is None:
                 raise ValueError("Max retries reached.")
             input_here, output_here = self.get_tokens(response)
-            input_tokens += input_here
-            output_tokens += output_here
-            output_messages.append(response.choices[0].message)
+            outputs = []
+            for choice in response.choices:
+                msg_content = ""
+                if hasattr(choice.message, 'reasoning') and choice.message.reasoning:
+                    msg_content += "<think>" + choice.message.reasoning + "</think>\n"
+                if choice.message.content is not None:
+                    msg_content += choice.message.content
+                if len(msg_content) > 0:
+                    parsed_msg = {"role": choice.message.role, "content": msg_content}
+                else:
+                    parsed_msg = {"role": "assistant", "content": ""}
+                outputs.append([parsed_msg])  # Each as a list for compatibility
+            return {
+                "output": outputs,
+                "input_tokens": input_here,
+                "output_tokens": output_here,
+            }
+        else:
+            # Original single completion logic
+            input_tokens = 0
+            output_tokens = 0
+            output_messages = []
+            current_tool_calls = 0
+            parsed_output_msgs = []
 
-            msg_content = ""
-            if hasattr(response.choices[0].message, 'reasoning') and response.choices[0].message.reasoning:
-                msg_content += "<think>" + response.choices[0].message.reasoning + "</think>\n"
-            if response.choices[0].message.content is not None:
-                msg_content += response.choices[0].message.content            
-            if len(msg_content) > 0:
-                parsed_output_msgs.append({"role": response.choices[0].message.role, "content": msg_content})
+            max_tool_calls = self.max_tool_calls
+            if not allow_tools:
+                max_tool_calls = 0
 
-            if not response.choices[0].message.tool_calls:
-                break
-            for tool_call in response.choices[0].message.tool_calls:
-                function_name = tool_call.function.name
-                if function_name in self.tool_functions:
-                    arguments = json.loads(tool_call.function.arguments)
-                    tool_func = self.tool_functions[function_name]
-                    if current_tool_calls > max_tool_calls:
-                        output = f"Error: Exceeded maximum number of tool calls ({max_tool_calls})."
-                    else:
-                        output = tool_func(**arguments)
-                    if not isinstance(output, str):
-                        additional_cost = output[1]
-                        input_tokens += additional_cost["input_tokens"]
-                        output_tokens += additional_cost["output_tokens"]
-                        output = output[0]
-                    current_tool_calls += 1
-                    n_execs_left = max_tool_calls - current_tool_calls
-                    info = f"\n\n### INFO ###\nYou have {n_execs_left} tool executions left."
-                    parsed_output = output + info
-                    output_messages.append({
-                        "role": "tool",
-                        "content": parsed_output,
-                        "tool_call_id": tool_call.id
-                    })
-                    parsed_output_msgs.append({
-                        "role": "function_call",
-                        "tool_name": function_name,
-                        "content": tool_call.function.arguments,
-                        "tool_call_id": tool_call.id
-                    })
-                    parsed_output_msgs.append({
-                        "role": "function_call_output",
-                        "content": parsed_output,
-                        "tool_call_id": tool_call.id
-                    })
+            for it in range(max_tool_calls + 1):
+                start_tool_calls = current_tool_calls
+                response = None
+                n_retries = 0
+                while response is None and n_retries < self.max_retries_inner:
+                    n_retries += 1
+                    try:
+                        response = client.chat.completions.create(
+                            model=self.model,
+                            messages=messages + output_messages,
+                            tools=None if current_tool_calls >= max_tool_calls else self.tool_descriptions,
+                            timeout=self.timeout,
+                            **self.kwargs
+                        )
+                    except Exception as e:
+                        logger.info(f"Got OpenAI error: {e}")
+                        time.sleep(60)
+                        if isinstance(e, RateLimitError):
+                            logger.info("Got OpenAI rate limit error. Sleeping for 60 seconds.")
+                            continue
+                        else:
+                            continue
+                if response is None:
+                    raise ValueError("Max retries reached.")
+                input_here, output_here = self.get_tokens(response)
+                input_tokens += input_here
+                output_tokens += output_here
+                output_messages.append(response.choices[0].message)
 
-            if start_tool_calls == current_tool_calls:
-                break
+                msg_content = ""
+                if hasattr(response.choices[0].message, 'reasoning') and response.choices[0].message.reasoning:
+                    msg_content += "<think>" + response.choices[0].message.reasoning + "</think>\n"
+                if response.choices[0].message.content is not None:
+                    msg_content += response.choices[0].message.content
+                if len(msg_content) > 0:
+                    parsed_output_msgs.append({"role": response.choices[0].message.role, "content": msg_content})
 
-        if len(parsed_output_msgs) == 0:
-            parsed_output_msgs.append({"role": "assistant", "content": ""})
-        return {
-            "output": parsed_output_msgs,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-        }
+                if not response.choices[0].message.tool_calls:
+                    break
+                for tool_call in response.choices[0].message.tool_calls:
+                    function_name = tool_call.function.name
+                    if function_name in self.tool_functions:
+                        arguments = json.loads(tool_call.function.arguments)
+                        tool_func = self.tool_functions[function_name]
+                        if current_tool_calls > max_tool_calls:
+                            output = f"Error: Exceeded maximum number of tool calls ({max_tool_calls})."
+                        else:
+                            output = tool_func(**arguments)
+                        if not isinstance(output, str):
+                            additional_cost = output[1]
+                            input_tokens += additional_cost["input_tokens"]
+                            output_tokens += additional_cost["output_tokens"]
+                            output = output[0]
+                        current_tool_calls += 1
+                        n_execs_left = max_tool_calls - current_tool_calls
+                        info = f"\n\n### INFO ###\nYou have {n_execs_left} tool executions left."
+                        parsed_output = output + info
+                        output_messages.append({
+                            "role": "tool",
+                            "content": parsed_output,
+                            "tool_call_id": tool_call.id
+                        })
+                        parsed_output_msgs.append({
+                            "role": "function_call",
+                            "tool_name": function_name,
+                            "content": tool_call.function.arguments,
+                            "tool_call_id": tool_call.id
+                        })
+                        parsed_output_msgs.append({
+                            "role": "function_call_output",
+                            "content": parsed_output,
+                            "tool_call_id": tool_call.id
+                        })
+
+                if start_tool_calls == current_tool_calls:
+                    break
+
+            if len(parsed_output_msgs) == 0:
+                parsed_output_msgs.append({"role": "assistant", "content": ""})
+            return {
+                "output": parsed_output_msgs,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+            }
 
 
     def openai_query_with_tools(self, query, is_together=False, allow_tools=True):

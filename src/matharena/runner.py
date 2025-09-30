@@ -122,11 +122,15 @@ def _prepare_api_kwargs(model_config, competition_config, tools):
     """
     kwargs = model_config.copy()
     kwargs.pop("model")
-    kwargs.pop("n", None)
+    # Only pop n for APIs not supporting multiple completions
+    api = kwargs.get("api")
+    if api not in ["openai", "openaiserver", "together"]:
+        kwargs.pop("n", None)
     kwargs.pop("api")
     kwargs.pop("human_readable_id")
     kwargs.pop("tokenizer_kwargs", None)
     kwargs.pop("date", None)
+    kwargs.pop("k", None)
     
     if "max_tool_calls" in competition_config:
         kwargs["max_tool_calls"] = competition_config["max_tool_calls"]
@@ -265,16 +269,19 @@ def _prepare_batches(problems, output_dir, n, skip_existing, recompute_tokens, m
     all_histories_per_problem = {i: [] for i in range(len(problems))}
     final_answer_comp = competition_config.get("final_answer", True)
 
+    api = model_config.get("api")
+    supports_n = api in ["openai", "openaiserver", "together"]
+
     for i, problem in enumerate(problems):
         problem_id = problem["problem_idx"]
         output_file = os.path.join(output_dir, f"{problem_id}.json")
         if skip_existing and os.path.exists(output_file):
             messages, detailed_costs, histories = _process_existing_results(output_file, competition, recompute_tokens, model_config, model_config["api"], skip_all)
-            
+
             detailed_costs_per_problem[i] = detailed_costs
             all_messages_per_problem[i] = messages
             all_histories_per_problem[i] = histories
-            
+
             logger.info(f"Skipping problem: {problem_id} ({len(messages)} times)")
             if len(messages) == n or skip_all:
                 calculate_problem_results(model_config, problem, output_dir, messages,
@@ -284,10 +291,17 @@ def _prepare_batches(problems, output_dir, n, skip_existing, recompute_tokens, m
 
         problem_statement = problem["problem"]
         problem_prompt = prompt_template.format(problem_statement=problem_statement)
-        for _ in range(n - len(all_messages_per_problem[i])):
+
+        if supports_n:
+            # Make one batch per problem, n will be set in API
             batch_idx_to_problem_idx[len(batch_prompts)] = i
             batch_prompts.append((problem_prompt, None))
-            
+        else:
+            # Make n batches per problem
+            for _ in range(n - len(all_messages_per_problem[i])):
+                batch_idx_to_problem_idx[len(batch_prompts)] = i
+                batch_prompts.append((problem_prompt, None))
+
     return batch_prompts, batch_idx_to_problem_idx, all_messages_per_problem, detailed_costs_per_problem, all_histories_per_problem
 
 def _initialize_agent(agent, model, api, api_kwargs, agent_config):
@@ -368,31 +382,52 @@ def _run_agent_and_process_results(cot_solver, batch_prompts, batch_idx_to_probl
         problem_idx = batch_idx_to_problem_idx[idx]
         problem = problems[problem_idx]
         prompt_template = f"{competition_config['instruction']}\n\n" + "{problem_statement}"
-        if final_answer_comp and extract_answer(messages[-1]["content"], True)[0] is None and (len(messages[-1]["content"]) > 0 or len(messages) > 1):
-            # essentially no answer found, ask the model to run again
-            messages, extra_cost = reprompt(
-                messages,
-                problem,
-                cot_solver.querier,
-                prompt_template,
-                competition_config.get("no_boxed_prompt", "You did not follow the formatting instructions. Please provide your final answer within \\boxed{}. If you did not find the answer, please use \\boxed{None}."),
-            )
-            detailed_cost["cost"] += extra_cost["cost"]
-            detailed_cost["input_tokens"] += extra_cost["input_tokens"]
-            detailed_cost["output_tokens"] += extra_cost["output_tokens"]
 
-        messages = [{"role": "user", "content": prompt_template.format(problem_statement=problem["problem"])}] + messages
-        all_messages_per_problem[problem_idx].append(messages)
-        detailed_costs_per_problem[problem_idx].append(detailed_cost)
-        all_histories_per_problem[problem_idx].append(history)
+        if isinstance(messages, list) and len(messages) > 0 and isinstance(messages[0], list):
+            # Multiple responses from n>1 API call
+            for msg_list in messages:
+                processed_messages = [{"role": "user", "content": prompt_template.format(problem_statement=problem["problem"])}] + msg_list
+                all_messages_per_problem[problem_idx].append(processed_messages)
+                detailed_cost_here = {k: v / len(messages) for k, v in detailed_cost.items()}
+                detailed_costs_per_problem[problem_idx].append(detailed_cost_here)
+                all_histories_per_problem[problem_idx].append(history)
 
-        log_this = len(all_messages_per_problem[problem_idx]) == n
-        calculate_problem_results(model_config, problem, output_dir,
-                                all_messages_per_problem[problem_idx],
-                                detailed_costs_per_problem[problem_idx],
-                                all_histories_per_problem[problem_idx],
-                                problem_idx, competition_config.get("strict_parsing"),
-                                final_answer=final_answer_comp, log_this=log_this)
+            log_this = len(all_messages_per_problem[problem_idx]) == n
+            if log_this:
+                calculate_problem_results(model_config, problem, output_dir,
+                                        all_messages_per_problem[problem_idx],
+                                        detailed_costs_per_problem[problem_idx],
+                                        all_histories_per_problem[problem_idx],
+                                        problem_idx, competition_config.get("strict_parsing"),
+                                        final_answer=final_answer_comp, log_this=True)
+        else:
+            # Single response
+            if final_answer_comp and extract_answer(messages[-1]["content"], True)[0] is None and (len(messages[-1]["content"]) > 0 or len(messages) > 1):
+                # essentially no answer found, ask the model to run again
+                messages, extra_cost = reprompt(
+                    messages,
+                    problem,
+                    cot_solver.querier,
+                    prompt_template,
+                    competition_config.get("no_boxed_prompt", "You did not follow the formatting instructions. Please provide your final answer within \\boxed{}. If you did not find the answer, please use \\boxed{None}."),
+                )
+                detailed_cost["cost"] += extra_cost["cost"]
+                detailed_cost["input_tokens"] += extra_cost["input_tokens"]
+                detailed_cost["output_tokens"] += extra_cost["output_tokens"]
+
+            messages = [{"role": "user", "content": prompt_template.format(problem_statement=problem["problem"])}] + messages
+            all_messages_per_problem[problem_idx].append(messages)
+            detailed_costs_per_problem[problem_idx].append(detailed_cost)
+            all_histories_per_problem[problem_idx].append(history)
+
+            log_this = len(all_messages_per_problem[problem_idx]) == n
+            if log_this:
+                calculate_problem_results(model_config, problem, output_dir,
+                                        all_messages_per_problem[problem_idx],
+                                        detailed_costs_per_problem[problem_idx],
+                                        all_histories_per_problem[problem_idx],
+                                        problem_idx, competition_config.get("strict_parsing"),
+                                        final_answer=final_answer_comp, log_this=log_this)
 
 def run(model_config, config_path, competition, repeat_idx=0, skip_existing=False, output_folder="outputs",
         competition_config_folder="competition_configs", skip_all=False, recompute_tokens=False):
