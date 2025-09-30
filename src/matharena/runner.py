@@ -138,11 +138,12 @@ def _prepare_api_kwargs(model_config, competition_config, tools):
     kwargs["tools"] = tools
     return kwargs
 
-def _load_problems(competition_config):
+def _load_problems(competition_config, data_dir=None):
     """Loads problems for the competition.
 
     Args:
         competition_config (dict): The competition configuration.
+        data_dir (str, optional): Directory to store downloaded data.
 
     Returns:
         list: A list of problems.
@@ -192,7 +193,10 @@ def _load_problems(competition_config):
                         p["source"] = source_map[p['problem_idx']]
 
     else:
-        problems = load_dataset(dataset_path, split="train").to_list()
+        if data_dir:
+            problems = load_dataset(dataset_path, split="train", cache_dir=data_dir).to_list()
+        else:
+            problems = load_dataset(dataset_path, split="train").to_list()
 
     return sorted(problems, key=lambda x: x["problem_idx"])
 
@@ -430,7 +434,7 @@ def _run_agent_and_process_results(cot_solver, batch_prompts, batch_idx_to_probl
                                         final_answer=final_answer_comp, log_this=log_this)
 
 def run(model_config, config_path, competition, repeat_idx=0, skip_existing=False, output_folder="outputs",
-        competition_config_folder="competition_configs", skip_all=False, recompute_tokens=False):
+        competition_config_folder="competition_configs", skip_all=False, recompute_tokens=False, data_dir=None):
     """Runs the experiment.
 
     Args:
@@ -460,7 +464,7 @@ def run(model_config, config_path, competition, repeat_idx=0, skip_existing=Fals
 
     logger.info(f"New run, model: {model}, competition: {competition}, repeat: {repeat_idx}")
 
-    problems = _load_problems(competition_config)
+    problems = _load_problems(competition_config, data_dir)
 
     output_dir = os.path.join(f"{output_folder}/{competition}/", f"{config_path.replace('.yaml', '')}_repeat_{repeat_idx}")
     os.makedirs(output_dir, exist_ok=True)

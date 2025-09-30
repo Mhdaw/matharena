@@ -10,6 +10,7 @@ parser.add_argument("--k", type=int, default=4, help="Number of response samples
 parser.add_argument("--configs", type=str, nargs="+", required=True)
 parser.add_argument("--skip-existing", action="store_true")
 parser.add_argument("--comp", type=str, required=True)
+parser.add_argument("--data", type=str, default=None, help="Directory to store/download competition data")
 parser.add_argument("--output-folder", type=str, default="outputs")
 parser.add_argument("--configs-folder", type=str, default="configs/models")
 parser.add_argument("--competition-config-folder", type=str, default="configs/competitions")
@@ -24,5 +25,5 @@ for config_path in args.configs:
         
         model_config["k"] = model_config.get("k", args.k)
         logger.info(f"Running config: {config_path}, repeat: {repeat_idx}")
-        run(model_config, config_path, args.comp, repeat_idx=repeat_idx, skip_existing=args.skip_existing, 
-            output_folder=args.output_folder, competition_config_folder=args.competition_config_folder, recompute_tokens=args.recompute_tokens)
+        run(model_config, config_path, args.comp, repeat_idx=repeat_idx, skip_existing=args.skip_existing,
+            output_folder=args.output_folder, competition_config_folder=args.competition_config_folder, recompute_tokens=args.recompute_tokens, data_dir=args.data)
