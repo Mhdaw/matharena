@@ -209,9 +209,9 @@ class APIQuery:
                 self.api = "openai"
         elif self.api == "vllm":
             return
-        elif self.api == "vllmserver":
-            self.api_key = "EMPTY"
-            self.base_url = "http://localhost:8000/v1"
+        elif self.api == "openaiserver":
+            self.base_url = self.kwargs.get("base_url", "http://localhost:8000/v1")
+            self.api_key = os.getenv("OPENAI_SERVER_API_KEY") if "localhost" not in self.base_url else "EMPTY"
             self.api = "openai"
         else:
             raise ValueError(f"API {self.api} not supported.")

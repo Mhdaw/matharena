@@ -1,0 +1,12 @@
+model: llama-3.1-8b-instant
+api: openaiserver
+base_url: "https://api.groq.com/openai/v1"
+max_tokens: 32000
+temperature: 0.6
+top_p: 0.9
+read_cost: 1
+write_cost: 1
+human_readable_id: llama-3.1-8b
+date: "2025-04-05"
+concurrent_requests: 8
+
