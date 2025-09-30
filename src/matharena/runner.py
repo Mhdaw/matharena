@@ -394,7 +394,7 @@ def _run_agent_and_process_results(cot_solver, batch_prompts, batch_idx_to_probl
                                 problem_idx, competition_config.get("strict_parsing"),
                                 final_answer=final_answer_comp, log_this=log_this)
 
-def run(model_config, config_path, competition, skip_existing=False, output_folder="outputs", 
+def run(model_config, config_path, competition, repeat_idx=0, skip_existing=False, output_folder="outputs",
         competition_config_folder="competition_configs", skip_all=False, recompute_tokens=False):
     """Runs the experiment.
 
@@ -413,8 +413,9 @@ def run(model_config, config_path, competition, skip_existing=False, output_fold
     model_config, competition_config, agent, agent_config = _load_model_and_competition_configs(
         model_config, competition, competition_config_folder
     )
-    
-    n = model_config["n"]
+
+    # Set n to k for backward compatibility
+    n = model_config["n"] = model_config.get("k", model_config.get("n", 4))
     model = model_config["model"]
     api = model_config["api"]
     tokenizer_kwargs = model_config.get("tokenizer_kwargs", {})
@@ -422,11 +423,11 @@ def run(model_config, config_path, competition, skip_existing=False, output_fold
     tools = _prepare_tools(competition_config, model_config)
     api_kwargs = _prepare_api_kwargs(model_config, competition_config, tools)
 
-    logger.info(f"New run, model: {model}, competition: {competition}")
+    logger.info(f"New run, model: {model}, competition: {competition}, repeat: {repeat_idx}")
 
     problems = _load_problems(competition_config)
-    
-    output_dir = os.path.join(f"{output_folder}/{competition}/", config_path.replace(".yaml", ""))
+
+    output_dir = os.path.join(f"{output_folder}/{competition}/", f"{config_path.replace('.yaml', '')}_repeat_{repeat_idx}")
     os.makedirs(output_dir, exist_ok=True)
 
     prompt_template = f"{competition_config['instruction']}\n\n" + "{problem_statement}"
@@ -529,8 +530,10 @@ def calculate_problem_results(model_config, problem, output_dir, messages_proble
 
     if final_answer:
         pass_at_1 = sum(x == gold_answer for x in answers)/n
+        pass_at_k = 1.0 if sum(corrects) > 0 else 0.0
     else:
         pass_at_1 = 0
+        pass_at_k = 0
     for i in range(len(costs_problem)):
         costs_problem[i]["cost"] = model_config["read_cost"] * costs_problem[i]["input_tokens"] + model_config["write_cost"] * costs_problem[i]["output_tokens"]
         costs_problem[i]["cost"] /= 10 ** 6
@@ -547,11 +550,12 @@ def calculate_problem_results(model_config, problem, output_dir, messages_proble
                     "gold_answer": str(problem.get("answer", "None")),
                     "source": problem.get("source", "None"),
                     "types": problem.get("problem_type", "None"),
-                    "messages": messages_problem, 
+                    "messages": messages_problem,
                     "history": histories_problem,
                     "answers": [convert_answer(answer) for answer in answers],
                     "correct": corrects,
                     "pass_at_1": pass_at_1,
+                    "pass_at_k": pass_at_k,
                     "cost": cost,
                     "detailed_costs": costs_problem,
                     "warnings": warnings,

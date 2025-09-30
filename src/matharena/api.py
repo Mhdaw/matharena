@@ -216,6 +216,7 @@ class APIQuery:
         elif self.api == "openaiserver":
             self.base_url = self.kwargs.pop("base_url", "http://localhost:8000/v1")
             self.api_key = os.getenv("OPENAI_SERVER_API_KEY") if "localhost" not in self.base_url else "EMPTY"
+            self.passKmode = self.kwargs.pop("passkmode", 0)
             self.api = "openai"
         else:
             raise ValueError(f"API {self.api} not supported.")
