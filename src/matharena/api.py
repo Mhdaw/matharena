@@ -210,7 +210,7 @@ class APIQuery:
         elif self.api == "vllm":
             return
         elif self.api == "openaiserver":
-            self.base_url = self.kwargs.get("base_url", "http://localhost:8000/v1")
+            self.base_url = self.kwargs.pop("base_url", "http://localhost:8000/v1")
             self.api_key = os.getenv("OPENAI_SERVER_API_KEY") if "localhost" not in self.base_url else "EMPTY"
             self.api = "openai"
         else:
