@@ -150,6 +150,22 @@ def _load_problems(competition_config, data_dir=None):
     """
     dataset_path = competition_config["dataset_path"]
 
+    # If data_dir is specified, construct local cache path for already-downloaded datasets
+    if data_dir and not os.path.exists(dataset_path):
+        # First try the simple transformation: MathArena/aime_2024_I -> MathArena___aime_2024_I
+        org_repo = dataset_path.replace('/', '___')
+        local_dataset_path = os.path.join(data_dir, org_repo)
+        if os.path.exists(local_dataset_path):
+            dataset_path = local_dataset_path
+        else:
+            # Try with the full HuggingFace cache path
+            import hashlib
+            cache_hash = hashlib.sha256(dataset_path.encode('utf-8')).hexdigest()[:64]
+            org_repo = dataset_path.replace('/', '___')  # MathArena/aime_2024_I -> MathArena___aime_2024_I
+            snapshots_path = os.path.join(data_dir, org_repo, 'snapshots', cache_hash)
+            if os.path.exists(snapshots_path):
+                dataset_path = snapshots_path
+
     if os.path.exists(dataset_path):
         answers_path = os.path.join(dataset_path, "answers.csv")
         source_path = os.path.join(dataset_path, "source.csv")
