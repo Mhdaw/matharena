@@ -450,7 +450,7 @@ def _run_agent_and_process_results(cot_solver, batch_prompts, batch_idx_to_probl
                                         final_answer=final_answer_comp, log_this=log_this)
 
 def run(model_config, config_path, competition, repeat_idx=0, skip_existing=False, output_folder="outputs",
-        competition_config_folder="competition_configs", skip_all=False, recompute_tokens=False, data_dir=None):
+        competition_config_folder="competition_configs", skip_all=False, recompute_tokens=False, data_dir=None, report_path=None):
     """Runs the experiment.
 
     Args:
@@ -463,6 +463,8 @@ def run(model_config, config_path, competition, repeat_idx=0, skip_existing=Fals
             Defaults to "competition_configs".
         skip_all (bool, optional): Whether to skip all problems. Defaults to False.
         recompute_tokens (bool, optional): Whether to recompute tokens. Defaults to False.
+        data_dir (str, optional): Directory to store downloaded data. Defaults to None.
+        report_path (str, optional): Path to save report outputs (overriding output_folder). Defaults to None.
     """
     
     model_config, competition_config, agent, agent_config = _load_model_and_competition_configs(
@@ -482,7 +484,11 @@ def run(model_config, config_path, competition, repeat_idx=0, skip_existing=Fals
 
     problems = _load_problems(competition_config, data_dir)
 
-    output_dir = os.path.join(f"{output_folder}/{competition}/", f"{config_path.replace('.yaml', '')}_repeat_{repeat_idx}")
+    # Use report_path if provided, otherwise use output_folder
+    if report_path:
+        output_dir = report_path
+    else:
+        output_dir = os.path.join(f"{output_folder}/{competition}/", f"{config_path.replace('.yaml', '')}_repeat_{repeat_idx}")
     os.makedirs(output_dir, exist_ok=True)
 
     prompt_template = f"{competition_config['instruction']}\n\n" + "{problem_statement}"
@@ -504,6 +510,9 @@ def run(model_config, config_path, competition, repeat_idx=0, skip_existing=Fals
         all_messages_per_problem, detailed_costs_per_problem, all_histories_per_problem,
         n, model_config, output_dir, competition_config, tokenizer_kwargs
     )
+
+    # Save general summary after run completion
+    save_general_summary(problems, output_dir, model_config, config_path, competition, repeat_idx)
 
 def safe_str_int(x, max_digits=4300):
     """Converts an integer to a string, handling large integers.
@@ -598,6 +607,28 @@ def calculate_problem_results(model_config, problem, output_dir, messages_proble
         "output_tokens": sum([d["output_tokens"] for d in costs_problem]),
     }
 
+    # Determine status based on maximum warning level
+    max_warning = max(warnings) if warnings else 0
+    if max_warning == 0:
+        status = "success"
+    elif max_warning in [1, 2]:  # MINOR, POSSIBLE
+        status = "warning"
+    else:  # MAJOR
+        status = "error"
+
+    # Extract raw extracted response (before validation)
+    extracted_responses = []
+    for j in range(n):
+        if final_answer:
+            model_content = messages_problem[j][-1]["content"]
+            if not isinstance(model_content, str):
+                extracted_responses.append("None")
+            else:
+                raw_extracted, _ = extract_answer(model_content, strict_parsing, True, list_answer)
+                extracted_responses.append(convert_answer(raw_extracted))
+        else:
+            extracted_responses.append("None")
+
     with open(output_file, "w") as f:
         json.dump({
                     "idx": problem_idx,
@@ -608,6 +639,8 @@ def calculate_problem_results(model_config, problem, output_dir, messages_proble
                     "messages": messages_problem,
                     "history": histories_problem,
                     "answers": [convert_answer(answer) for answer in answers],
+                    "extracted_response": extracted_responses,
+                    "status": status,
                     "correct": corrects,
                     "pass_at_1": pass_at_1,
                     "pass_at_k": pass_at_k,
@@ -615,6 +648,68 @@ def calculate_problem_results(model_config, problem, output_dir, messages_proble
                     "detailed_costs": costs_problem,
                     "warnings": warnings,
                 }, f, indent=2)
+
+def save_general_summary(problems, output_dir, model_config, config_path, competition, repeat_idx):
+    """Saves a general summary JSON file containing problems, golden answers, and llm responses.
+
+    Args:
+        problems (list): List of problem dictionaries.
+        output_dir (str): The output directory path.
+        model_config (dict): The model configuration.
+        config_path (str): The path to the model configuration file.
+        competition (str): The name of the competition.
+        repeat_idx (int): The repeat index.
+    """
+    summary_file = os.path.join(output_dir, "summary.json")
+
+    # Collect all problem data
+    problem_summaries = []
+    for problem in problems:
+        problem_id = problem["problem_idx"]
+        problem_file = os.path.join(output_dir, f"{problem_id}.json")
+
+        if os.path.exists(problem_file):
+            with open(problem_file, "r") as f:
+                problem_data = json.load(f)
+
+            problem_summaries.append({
+                "problem_idx": problem_id,
+                "problem": problem_data["problem"],
+                "gold_answer": problem_data["gold_answer"],
+                "llm_responses": [msg[-1]["content"] for msg in problem_data["messages"]] if problem_data["messages"] else [],
+                "extracted_responses": problem_data.get("extracted_response", []),
+                "status": problem_data.get("status", "unknown"),
+                "correct": problem_data.get("correct", []),
+                "warnings": problem_data.get("warnings", [])
+            })
+        else:
+            # Problem not yet processed
+            problem_summaries.append({
+                "problem_idx": problem_id,
+                "problem": problem["problem"],
+                "gold_answer": str(problem.get("answer", "None")),
+                "llm_responses": [],
+                "extracted_responses": [],
+                "status": "pending",
+                "correct": [],
+                "warnings": []
+            })
+
+    summary_data = {
+        "competition": competition,
+        "model_config": config_path,
+        "model_name": model_config.get("human_readable_id", model_config.get("model", "unknown")),
+        "repeat_idx": repeat_idx,
+        "total_problems": len(problems),
+        "processed_problems": len([p for p in problem_summaries if p["status"] != "pending"]),
+        "problems": problem_summaries
+    }
+
+    with open(summary_file, "w") as f:
+        json.dump(summary_data, f, indent=2)
+
+    logger.info(f"Saved general summary to {summary_file}")
+
 
 def convert_answer(answer):
     """Converts an answer to a string.

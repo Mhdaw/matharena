@@ -18,6 +18,7 @@ if __name__ == "__main__":
     parser.add_argument("--configs-folder", type=str, default="configs/models", help="Directory containing the configs of the models")
     parser.add_argument("--competition-configs-folder", type=str, default="configs/competitions", help="Directory containing the configs")
     parser.add_argument("--public", action="store_true", help="Make the dataset public (not advised, best to keep it private and manually share)")
+    parser.add_argument("--save-local", action="store_true", help="Save aggregated data locally before uploading to HF")
 
     args = parser.parse_args()
 
@@ -91,13 +92,19 @@ if __name__ == "__main__":
         df["parsed_answer"] = df["parsed_answer"].astype(str)
     if "source" in df.columns:
         df = df[df["source"].apply(lambda x: "smt" not in x.lower())]
-    
+
+    if args.save_local:
+        local_output_path = os.path.join(args.output_folder, f"{args.comp}_aggregated.json")
+        df.to_json(local_output_path, orient="records", indent=2)
+        logger.info(f"Saved aggregated data locally to {local_output_path}")
+
+        # Also save as CSV for easier analysis
+        csv_output_path = os.path.join(args.output_folder, f"{args.comp}_aggregated.csv")
+        df.to_csv(csv_output_path, index=False)
+        logger.info(f"Saved aggregated data as CSV to {csv_output_path}")
+
     dataset = Dataset.from_pandas(df)
     dataset.push_to_hub(
         os.path.join(args.org, args.repo_name),
         private=not args.public,
     )
-
-
-
-
